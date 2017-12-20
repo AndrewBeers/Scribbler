@@ -12,13 +12,14 @@ from agent import Agent, Scribbler
 class Learner(object):
 
     def __init__(self, volume_filepath, label_filepath, radius=16, hidden_num=32, learning_rate=.001, random_rate=.1,
-        epochs=1000, display_step=50, output_results='results.csv'):
+        epochs=1000, display_step=50, layer_num=2, output_results='results.csv'):
 
         self.volume_filepath = volume_filepath
         self.label_filepath = label_filepath
 
         self.radius = radius
 
+        self.layer_num = layer_num
         self.hidden_num = hidden_num
 
         self.learning_rate = learning_rate
@@ -58,25 +59,13 @@ class Learner(object):
 
         # 'position' = np.array([np.random.randint(0, max_dim) for max_dim in self.volume.shape]), 
 
-        self.weights = {
-            'input': tf.Variable(tf.random_normal([len(self.actions), self.hidden_num])),
-            'output': tf.Variable(tf.random_normal([self.hidden_num, len(self.actions)]))
-        }
-
-        self.biases = {
-            'input': tf.Variable(tf.random_normal([self.hidden_num])),
-            'output': tf.Variable(tf.random_normal([len(self.actions)]))
-        }
-
         state = {'patch': tf.placeholder(shape=3*(int(self.radius),), dtype=tf.float32), 
-                'weights': self.weights,
-                'biases': self.biases,
                 'position': tf.placeholder(shape=(1,3), dtype=tf.float32),
                 'goal': tf.placeholder(shape=(1,3), dtype=tf.float32), 
                 'radius': self.radius}
 
-        self.scribbler_agent = Scribbler(actions=self.weights, state=state)
-        self.scribbler_agent.init_vars()
+        self.scribbler_agent = Scribbler(state=state)
+        self.scribbler_agent.build_model(self.layer_num, self.hidden_num, batch_norm=True)
 
         self.loss = self.scribbler_agent.cost()
 
@@ -119,21 +108,20 @@ class Learner(object):
         for idx,grad in enumerate(gradBuffer):
             gradBuffer[idx] = grad * 0
 
-        i = 0
+        episode = 0
         total_reward = []
         total_length = []
 
 
         with open(self.output_results, 'w') as csvfile:
             writer = csv.writer(csvfile, delimiter=",")
-            while i < total_episodes:
+            while episode < total_episodes:
 
                 self.starting_point = np.array([np.random.randint(0, i-16) for i in self.volume.shape]).astype(np.float32).reshape(1,3)
                 running_reward = 0
                 episode_history = []
 
-                print self.starting_point
-                for j in range(20):
+                for j in range(80):
 
                     action = self.sess.run(self.scribbler_agent.prediction(), feed_dict={self.scribbler_agent.state['position']:self.starting_point,self.scribbler_agent.state['goal']:self.label_centroid})
                     new_pos = advance_position(self.starting_point, action)
@@ -157,20 +145,18 @@ class Learner(object):
                     # print '\n'
                     writer.writerow(self.starting_point[0,:])
 
+                print running_reward
                 #Update the network.
                 episode_history = np.array(episode_history)
                 episode_history[:,2] = discount_rewards(episode_history[:,2])
-
-                # feed_dict={myAgent.reward_holder:episode_history[:,2],
-                        # myAgent.action_holder:episode_history[:,1],myAgent.state_in:np.vstack(episode_history[:,0])}
 
                 grads = self.sess.run(self.gradients, feed_dict={self.scribbler_agent.state['position']:self.starting_point,self.scribbler_agent.state['goal']:self.label_centroid})
 
                 for idx,grad in enumerate(grads):
                     gradBuffer[idx] += grad
 
-                if i % update_frequency == 0 and i != 0:
-                    feed_dict= dictionary = dict(zip(self.gradient_holders, gradBuffer))
+                if episode % update_frequency == 0 and episode != 0:
+                    feed_dict = dict(zip(self.gradient_holders, gradBuffer))
                     _ = self.sess.run(self.update_batch, feed_dict=feed_dict)
                     for ix,grad in enumerate(gradBuffer):
                         gradBuffer[ix] = grad * 0
@@ -178,7 +164,7 @@ class Learner(object):
                 total_reward.append(running_reward)
                 total_length.append(j)
 
-                i += 1
+                episode += 1
 
     def run_model_basic(self):
 
@@ -240,7 +226,7 @@ def extract_patch(patch, index, radius):
 
 def advance_position(position, action):
 
-    return np.array(position + (np.squeeze(action)*16).astype(int))
+    return np.array(position + (np.squeeze(action)*8).astype(int))
 
 if __name__ == '__main__':
 
